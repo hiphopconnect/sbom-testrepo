@@ -1,7 +1,0 @@
-# Absichtlich alte Versionen mit bekannten Schwachstellen, nur zum Testen des SBOM-Collectors
-requests==2.19.1
-urllib3==1.24.1
-Jinja2==2.10
-PyYAML==5.3
-Django==3.2.4
-Pillow==8.1.0
