@@ -1,0 +1,3 @@
+# Syft soll die eigene SBOM nicht als Paketquelle mitlesen
+exclude:
+  - "./sbom.cdx.json"

@@ -1,0 +1,57 @@
+name: SBOM erzeugen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Der Workflow committet sbom.cdx.json ins eigene Repo; ein Secret ist nicht nötig
+permissions:
+  contents: write
+
+jobs:
+  sbom:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Syft läuft im Runner, ein eigener Dienst ist nicht nötig
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/roh.cdx.json
+          upload-artifact: false
+
+      - name: Nur bei geänderten Abhängigkeiten committen
+        run: |
+          # Zeitstempel, Seriennummer und Herkunft ändern sich bei jedem Lauf und zählen nicht als Änderung
+          inhalt='del(.serialNumber, .metadata.timestamp)
+            | .metadata.properties = [(.metadata.properties // [])[] | select(.name | startswith("sbom-collector:") | not)]'
+          jq -S "$inhalt" "$RUNNER_TEMP/roh.cdx.json" > "$RUNNER_TEMP/neu.json"
+          if [ -f sbom.cdx.json ] && jq -S "$inhalt" sbom.cdx.json | cmp -s - "$RUNNER_TEMP/neu.json"; then
+            echo "Abhängigkeiten unverändert"
+            exit 0
+          fi
+          # Herkunft: der Commit, der die Abhängigkeiten geändert hat, und wer ihn gemacht hat
+          jq --arg repo "$GITHUB_REPOSITORY" --arg commit "$GITHUB_SHA" --arg ref "$GITHUB_REF_NAME" \
+             --arg autor "$(git log -1 --format=%an)" --arg mail "$(git log -1 --format=%ae)" \
+             --arg zeit "$(git log -1 --format=%cI)" '
+            del(.serialNumber, .metadata.timestamp)
+            | .metadata.properties = ((.metadata.properties // []) + [
+                {name: "sbom-collector:repo", value: $repo},
+                {name: "sbom-collector:commit", value: $commit},
+                {name: "sbom-collector:ref", value: $ref},
+                {name: "sbom-collector:autor", value: $autor},
+                {name: "sbom-collector:autor_mail", value: $mail},
+                {name: "sbom-collector:zeit", value: $zeit}])' "$RUNNER_TEMP/roh.cdx.json" > sbom.cdx.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sbom.cdx.json
+          git commit -m "SBOM aktualisieren für ${GITHUB_SHA::7}"
+          # Ein weiterer Push kann inzwischen gekommen sein
+          for versuch in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((versuch * 5))
+          done
+          exit 1
